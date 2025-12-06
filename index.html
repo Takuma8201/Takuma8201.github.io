@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI同時比較ツール</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      background: #f4f4f4;
+      padding: 20px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+
+    #question {
+      width: 100%;
+      padding: 10px;
+      font-size: 1.1rem;
+      box-sizing: border-box;
+    }
+
+    button {
+      padding: 8px 20px;
+      font-size: 1rem;
+      margin-top: 8px;
+    }
+
+    #sessions {
+      margin-top: 20px;
+    }
+
+    .session {
+      background: #ffffff;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+
+    .session.collapsed {
+      opacity: 0.8;
+    }
+
+    .question-title {
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+
+    .session.collapsed .question-title {
+      font-size: 0.9rem;
+    }
+
+    .answers-container {
+      margin-top: 8px;
+    }
+
+    .answer-card {
+      background: #fdfdfd;
+      padding: 8px 10px;
+      margin: 8px 0;
+      border-left: 4px solid #4caf50;
+      border-radius: 4px;
+    }
+
+    .answer-card h3 {
+      margin: 0 0 4px;
+      font-size: 0.95rem;
+    }
+
+    .wide-card {
+      background: #f9f9ff;
+      padding: 12px 14px;
+      margin: 10px 0;
+      border-left: 4px solid #2196f3;
+      border-radius: 4px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+
+    .wide-card h2 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+    }
+
+    .summary-card {
+      background: #fffbe6;
+      border-left-color: #ffb300;
+    }
+
+    .session.collapsed .answer-card,
+    .session.collapsed .wide-card:not(.summary-card) {
+      display: none;
+    }
+
+    .session.collapsed .summary-card {
+      font-size: 0.9rem;
+    }
+
+    .loading {
+      font-style: italic;
+      color: #666;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      margin: 0;
+    }
+
+    .footer {
+      margin-top: 30px;
+      padding: 15px;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #666;
+      background: #fafafa;
+      border-top: 1px solid #ddd;
+      border-radius: 8px;
+    }
+
+    /* 選択ボックスのスタイル */
+    #ai-select, #option-select {
+      background: #fff;
+      padding: 10px;
+      border-radius: 6px;
+      margin-bottom: 10px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>AI同時比較ツール</h1>
+
+  <!-- 使用するAIの選択 -->
+  <div id="ai-select">
+    <strong>使用するAIを選択：</strong><br>
+    <label><input type="checkbox" id="ai_gpt4o" checked> gpt-4o-mini</label><br>
+    <label><input type="checkbox" id="ai_gpt41" checked> gpt-4.1-mini</label><br>
+    <label><input type="checkbox" id="ai_claude" checked> Claude Haiku</label><br>
+    <!-- ★ ここに Gemini を追加（初期はオフ） -->
+    <label><input type="checkbox" id="ai_gemini"> Gemini Flash</label><br>
+    <label><input type="checkbox" id="ai_mistral"> Mistral small</label>
+  </div>
+
+  <!-- 要約・矛盾点・頻出単語ごとのON/OFF -->
+  <div id="option-select">
+    <strong>追加解析オプション：</strong><br>
+    <label>
+      <input type="checkbox" id="opt_summary" checked>
+      要約を表示
+    </label><br>
+    <label>
+      <input type="checkbox" id="opt_contradictions" checked>
+      矛盾点を表示
+    </label><br>
+    <label>
+      <input type="checkbox" id="opt_freq" checked>
+      頻出単語（3回以上）を表示
+    </label>
+  </div>
+
+  <!-- 質問欄 -->
+  <textarea id="question" rows="3" placeholder="質問を入力してください（200文字まで）"></textarea><br />
+  <button onclick="send()">送信</button>
+
+  <div id="sessions"></div>
+
+  <script>
+    const CACHE_LIMIT = 10;
+    const CACHE_KEY = "ai_cache";
+
+    function loadCache() {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return [];
+      try { return JSON.parse(raw); } catch { return []; }
+    }
+
+    function saveCache(cache) {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+    }
+
+    // 質問＋モデル構成＋オプション構成でキャッシュキーを分ける
+    function findInCache(question, keyObj) {
+      const cache = loadCache();
+      const keyStr = JSON.stringify(keyObj);
+      return cache.find(entry => entry.question === question && entry.keyStr === keyStr);
+    }
+
+    function addToCache(question, keyObj, answers) {
+      let cache = loadCache();
+      const keyStr = JSON.stringify(keyObj);
+      cache = cache.filter(entry => !(entry.question === question && entry.keyStr === keyStr));
+      cache.unshift({ question, keyStr, answers });
+      if (cache.length > CACHE_LIMIT) cache = cache.slice(0, CACHE_LIMIT);
+      saveCache(cache);
+    }
+
+    async function send() {
+      const q = document.getElementById("question").value.trim();
+
+      if (!q) {
+        alert("質問を入力してください");
+        return;
+      }
+      if (q.length > 200) {
+        alert("質問は200文字以内にしてください（現在：" + q.length + "文字）");
+        return;
+      }
+
+      // チェックされたAIモデルを取得
+      const selectedModels = {
+        gpt4o:  document.getElementById("ai_gpt4o").checked,
+        gpt41:  document.getElementById("ai_gpt41").checked,
+        claude: document.getElementById("ai_claude").checked,
+        gemini: document.getElementById("ai_gemini").checked,
+        mistral: document.getElementById("ai_mistral").checked
+      };
+
+      // 要約・矛盾・頻出単語の個別フラグ
+      const optionFlags = {
+        summary:        document.getElementById("opt_summary").checked,
+        contradictions: document.getElementById("opt_contradictions").checked,
+        frequent_words: document.getElementById("opt_freq").checked
+      };
+
+      // ★ 修正ポイント：mistral も含めて「1つ以上か？」を判定
+      const anySelected = Object.values(selectedModels).some(v => v);
+      if (!anySelected) {
+        alert("少なくとも1つはAIを選択してください");
+        return;
+      }
+
+      // バックエンドに「要約系を計算する必要があるか」だけ伝えるフラグ
+      const needSummaryForAPI =
+        optionFlags.summary || optionFlags.contradictions || optionFlags.frequent_words;
+
+      // キャッシュキー用オブジェクト
+      const cacheKeyObj = { selectedModels, optionFlags };
+
+      const sessionsDiv = document.getElementById("sessions");
+      const oldSessions = document.querySelectorAll(".session");
+      oldSessions.forEach(s => s.classList.add("collapsed"));
+
+      const session = document.createElement("div");
+      session.className = "session";
+
+      const qTitle = document.createElement("div");
+      qTitle.className = "question-title";
+      qTitle.textContent = "質問: " + q;
+      session.appendChild(qTitle);
+
+      const answersContainer = document.createElement("div");
+      answersContainer.className = "answers-container";
+      answersContainer.innerHTML = '<div class="loading">AIが思考中です…</div>';
+      session.appendChild(answersContainer);
+
+      sessionsDiv.prepend(session);
+
+      // キャッシュ検索
+      const cached = findInCache(q, cacheKeyObj);
+      if (cached) {
+        answersContainer.innerHTML = "";
+        renderAnswers(answersContainer, cached.answers, optionFlags);
+        return;
+      }
+
+      try {
+        const res = await fetch("/ask", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            question: q,
+            models: selectedModels,
+            need_summary: needSummaryForAPI
+          })
+        });
+
+        if (!res.ok) throw new Error("サーバーエラーが発生しました");
+
+        const data = await res.json();
+        const answers = data.answers || {};
+
+        answersContainer.innerHTML = "";
+        renderAnswers(answersContainer, answers, optionFlags);
+
+        addToCache(q, cacheKeyObj, answers);
+
+      } catch (err) {
+        answersContainer.innerHTML = `<div style="color:red;">エラー: ${err.message}</div>`;
+      }
+    }
+
+    function renderAnswers(container, answers, optionFlags) {
+      if (answers.error) {
+        const errDiv = document.createElement("div");
+        errDiv.style.color = "red";
+        errDiv.textContent = answers.error;
+        container.appendChild(errDiv);
+        return;
+      }
+
+      // 1. 各AIの回答
+      for (const key in answers) {
+        if (key === "summary" || key === "contradictions" || key === "frequent_words") continue;
+
+        const card = document.createElement("div");
+        card.className = "answer-card";
+
+        const title = document.createElement("h3");
+        title.textContent = key;
+
+        const body = document.createElement("p");
+        body.textContent = answers[key];
+
+        card.appendChild(title);
+        card.appendChild(body);
+        container.appendChild(card);
+      }
+
+      // 2. 要約
+      if (optionFlags.summary) {
+        const sumCard = document.createElement("div");
+        sumCard.className = "wide-card summary-card";
+        sumCard.innerHTML = `<h2>要約</h2><p>${answers.summary || "要約がありません。"}</p>`;
+        container.appendChild(sumCard);
+      }
+
+      // 3. 矛盾点
+      if (optionFlags.contradictions) {
+        const conCard = document.createElement("div");
+        conCard.className = "wide-card";
+        conCard.innerHTML = `<h2>矛盾点</h2><p>${answers.contradictions || "矛盾点は特にありません。"}</p>`;
+        container.appendChild(conCard);
+      }
+
+      // 4. 頻出単語
+      if (optionFlags.frequent_words) {
+        const freqCard = document.createElement("div");
+        freqCard.className = "wide-card";
+        freqCard.innerHTML = `<h2>頻出単語（3回以上）</h2><pre>${answers.frequent_words || "頻出単語は特にありませんでした。"}</pre>`;
+        container.appendChild(freqCard);
+      }
+    }
+  </script>
+
+  <footer class="footer">
+    このサイトは試験運用中です。<br>
+    急に応答をしなくなる場合があります。<br>
+    素人が作っているため不具合はつきものだと思ってください<br>
+    バージョン1　　作成日2025年12月2日<br>
+    <a href="/kiyaku.html">利用規約</a>
+  </footer>
+
+</body>
+</html>
