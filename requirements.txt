@@ -2,4 +2,6 @@ fastapi
 uvicorn[standard]
 python-dotenv
 openai>=1.0.0
+google-genai
 httpx
+
