@@ -60,7 +60,6 @@
       transform: rotate(-90deg);
     }
 
-    /* 要約以外を折りたたむ */
     .collapsed .answers > :not(.summary) {
       display: none;
     }
@@ -83,7 +82,12 @@
 
     .summary {
       border-left-color: #ffb300;
-      background: #fffbe6;
+      background:#fffbe6;
+    }
+
+    .genre-row label {
+      margin-right: 12px;
+      white-space: nowrap;
     }
 
     .footer {
@@ -103,6 +107,22 @@
 
 <h1>AI同時比較ツール</h1>
 
+<!-- ✅ コンテキスト（上部に移動） -->
+<div class="box">
+  <h2 style="margin:0 0 6px; font-size:1rem;">AI同時比較・要約・矛盾検出ツールとは</h2>
+  <p style="margin:0 0 6px;">
+    本サイトは、複数の生成AIに同じ質問を入力し、
+    回答の共通点・違い・数値や前提条件の矛盾を整理・要約するためのサイトです。
+  </p>
+  <p style="margin:0;">
+    レポート作成や調べ物の際に、単一AIの回答を鵜呑みにせず、
+    比較・検証する用途を想定しています。
+  </p>
+    数値・歴史・意見・雑学といった質問ジャンルに応じて、
+    矛盾検出の精度を調整できる点が特徴です。
+  </p>
+</div>
+
 <!-- AI選択 -->
 <div class="box">
   <strong>使用するAI（最大3つ）</strong><br>
@@ -113,15 +133,15 @@
   <label><input type="checkbox" class="ai"> Mistral small</label>
 </div>
 
-<!-- ジャンル選択 -->
+<!-- ✅ ジャンル選択（横並びラジオ） -->
 <div class="box">
-  <strong>質問ジャンル（矛盾チェック精度に影響）</strong><br>
-  <select id="genre" style="margin-top:6px; padding:8px;">
-    <option value="numeric" selected>数値（割合・確率・金額）</option>
-    <option value="history">歴史（年号・出来事）</option>
-    <option value="opinion">意見（主張の違い）</option>
-    <option value="trivia">雑学（軽量チェック）</option>
-  </select>
+  <strong>質問ジャンル（1つ選択）</strong><br>
+  <div class="genre-row" style="margin-top:6px;">
+    <label><input type="radio" name="genre" value="numeric" checked> 数値</label>
+    <label><input type="radio" name="genre" value="history"> 歴史</label>
+    <label><input type="radio" name="genre" value="opinion"> 意見</label>
+    <label><input type="radio" name="genre" value="trivia"> 雑学</label>
+  </div>
 </div>
 
 <!-- オプション -->
@@ -129,35 +149,6 @@
   <label><input type="checkbox" id="opt_summary" checked> 要約</label><br>
   <label><input type="checkbox" id="opt_contra" checked> 矛盾点</label><br>
   <label><input type="checkbox" id="opt_freq" checked> 頻出単語</label>
-</div>
-
-<!-- 矛盾検出の強度 -->
-<div class="box">
-  <strong>矛盾検出の強度</strong><br>
-  <select id="contra_strength" style="margin-top:6px; padding:8px;">
-    <option value="low">弱（明確な矛盾だけ）</option>
-    <option value="medium" selected>中（数値・年号の違いを拾う）</option>
-    <option value="high">強（前提や条件の違いまで拾う）</option>
-  </select>
-  <div style="margin-top:6px; color:#666; font-size:0.85rem;">
-    ※ 強にすると「前提条件の違い」も矛盾として指摘しやすくなります。
-  </div>
-</div>
-
-<!-- ✅ コンテキスト（検索エンジン向け説明文） -->
-<div class="box">
-  <h2 style="margin:0 0 6px; font-size:1rem;">AI同時比較・要約・矛盾検出ツールとは</h2>
-  <p style="margin:0 0 6px;">
-    本サイトは、複数の生成AIに同じ質問を入力し、それぞれの回答内容を比較することで、
-    共通点・違い・数値や前提条件の食い違い（矛盾）を分かりやすく整理・要約するためのツールです。
-  </p>
-  <p style="margin:0 0 6px;">
-    レポート作成や調べ物の場面で、単一のAI回答をそのまま使用するのではなく、
-    複数の視点から情報を検証することを目的としています。
-  </p>
-  <p style="margin:0; color:#666; font-size:0.85rem;">
-    ※ 生成AIの回答には誤りが含まれる可能性があります。重要な内容は一次情報で確認してください。
-  </p>
 </div>
 
 <!-- 質問 -->
@@ -183,10 +174,9 @@
   async function send() {
     const q = document.getElementById("question").value.trim();
     if (!q) return alert("質問を入力してください");
-
     document.getElementById("question").value = "";
 
-    const genre = document.getElementById("genre").value;
+    const genre = document.querySelector('input[name="genre"]:checked').value;
 
     const models = {
       gpt4o: aiChecks[0].checked,
@@ -197,9 +187,7 @@
     };
 
     const need_summary =
-      document.getElementById("opt_summary").checked ||
-      document.getElementById("opt_contra").checked ||
-      document.getElementById("opt_freq").checked;
+      opt_summary.checked || opt_contra.checked || opt_freq.checked;
 
     const session = document.createElement("div");
     session.className = "session collapsed";
@@ -220,12 +208,7 @@
     const res = await fetch("/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question: q,
-        models: models,
-        need_summary: need_summary,
-        genre: genre
-      })
+      body: JSON.stringify({ question: q, models, need_summary, genre })
     });
 
     const data = await res.json();
@@ -237,21 +220,20 @@
         k === "summary" ? "wide summary" :
         (k === "contradictions" || k === "frequent_words") ? "wide" :
         "answer-card";
-
       d.innerHTML = `<strong>${k}</strong><br>${data.answers[k]}`;
       answers.appendChild(d);
     }
 
-    /* 回答が返ってきたら自動展開 */
     session.classList.remove("collapsed");
   }
 </script>
 
 <footer class="footer">
-  バージョン1　作成日2025年12月2日<br>
-  AI回答の違いや矛盾を確認したい方向けの、AI同時比較・要約ツールです。<br>
-  <a href="/kiyaku.html">利用規約</a><br>
-  <a href="/privacy.html">プライバシーポリシー</a><br>
+  AI回答の違いや矛盾を確認したい方向けのツールです。<br>
+  <a href="/static/about.html">このサイトについて</a> ｜ 
+  <a href="/static/how-to-use.html">使い方</a><br>
+  <a href="/static/kiyaku.html">利用規約</a> /
+  <a href="/static/privacy.html">プライバシーポリシー</a> /
   <a href="https://docs.google.com/forms/d/e/1FAIpQLSdleI9uZln5Yz46S-FnjEU_SWBr73-2dRC5ycCr3hBXsf0Wvg/viewform?usp=dialog"
      target="_blank" rel="noopener">お問い合わせ</a>
 </footer>
